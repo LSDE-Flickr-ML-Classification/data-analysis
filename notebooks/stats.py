@@ -65,7 +65,12 @@ import numpy as np
 
 
 df_download_history = spark.read.parquet("/mnt/group07/download_history.parquet")
-df_download_history.show()
+df_download_history.show(100, False)
+
+# COMMAND ----------
+
+df_status_code_mean = df_download_history.select("status_code", "download_duration").orderBy("status_code").groupBy("status_code").mean("download_duration")
+df_status_code_mean.show()
 
 # COMMAND ----------
 
@@ -101,6 +106,7 @@ df_sc_200_pd = df_download_history.select("status_code", col("download_duration"
 
 fig, ax = plt.subplots(figsize=(7,3))
 bxp = df_sc_200_pd.boxplot(column=['Duration in seconds'], by='status_code', ax=ax)
+print(df_sc_200_pd.groupby("status_code").describe())
 plt.suptitle('')
 plt.subplots_adjust(left=0.2, right=0.7, top=0.9, bottom=0.2)
 bxp.set_xlabel("HTTP Status Code")
@@ -109,3 +115,82 @@ bxp.set_xlabel("HTTP Status Code")
 # COMMAND ----------
 
 display(fig)
+
+# COMMAND ----------
+
+df_video_img_ratio = df_raw_flickr_subset.select("id", "photo_video_marker").orderBy("photo_video_marker").groupBy("photo_video_marker").count()
+df_video_img_ratio.show()
+df_video_img_ratio_pd = df_video_img_ratio.toPandas()
+
+# COMMAND ----------
+
+df_durations = df_download_history.select(df_download_history.download_duration)
+df_durations.show()
+df_durations_pd = df_durations.toPandas()
+d = df_durations_pd['download_duration']
+fig = plt.figure(figsize=(8,6))
+
+n, bins, patches = plt.hist(x=d, bins='auto', color='#0504aa',
+                            alpha=0.7, rwidth=0.85)
+plt.grid(axis='y', alpha=0.75)
+plt.xlabel('Value')
+plt.ylabel('Frequency')
+# plt.title('My Very Own Histogram')
+plt.text(23, 45, r'$\mu=15, b=3$')
+maxfreq = n.max()
+# Set a clean upper y-axis limit.
+plt.ylim(ymax=np.ceil(maxfreq / 10) * 10 if maxfreq % 10 else maxfreq + 10)
+
+# COMMAND ----------
+
+display(fig)
+
+# COMMAND ----------
+
+fig = plt.figure(figsize=(8,6))
+
+
+df_durations_pd.boxplot()
+
+display(fig)
+
+# COMMAND ----------
+
+df_file_size_mean = df_download_history.select("image_size")
+df_file_size_mean_pd = df_file_size_mean.toPandas()
+df_file_size_mean.describe().show()
+fig = plt.figure()
+df_file_size_mean_pd.boxplot()
+
+
+# COMMAND ----------
+
+display(fig)
+
+# COMMAND ----------
+
+df_download_history.filter(df_download_history.image_size == 1907786).show(10, False)
+
+# COMMAND ----------
+
+df_download_history.filter(df_download_history.image_size == 1020).show(10, False)
+
+# COMMAND ----------
+
+df_pixel_sizes = df_download_history.select("image_px_width", "image_px_height")
+
+df_ps_pd = df_pixel_sizes.toPandas()
+
+fig = plt.figure()
+plt.scatter(df_ps_pd["image_px_width"], df_ps_pd["image_px_height"])
+plt.title("Scatter Plot for Sample")
+plt.xlabel("Width in px")
+plt.ylabel("Height in px")
+
+
+# COMMAND ----------
+
+display(fig)
+
+# COMMAND ----------
+
