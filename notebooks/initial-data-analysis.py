@@ -1,54 +1,5 @@
 # Databricks notebook source
-from pyspark.sql.types import StructField, StringType, IntegerType, LongType, StructType, DateType
-
-# DataFrame definitions
-
-# CSV file
-csv_field_list = [
-  StructField('id', StringType(), True),
-  StructField('user_nsid', StringType(), True),
-  StructField('user_nickname', StringType(), True),
-  StructField('date_taken', StringType(), True),
-  StructField('date_uploaded', StringType(), True),
-  StructField('capture_device', StringType(), True),
-  StructField('title', StringType(), True),
-  StructField('description', StringType(), True),
-  StructField('user_tags', StringType(), True),
-  StructField('machine_tags', StringType(), True),
-  StructField('longitude', StringType(), True),
-  StructField('latitude', StringType(), True),
-  StructField('accuracy', StringType(), True),
-  StructField('photo_video_page_url', StringType(), True),
-  StructField('photo_video_download_url', StringType(), True),
-  StructField('license_name', StringType(), True),
-  StructField('license_url', StringType(), True),
-  StructField('photo_video_server_id', StringType(), True),
-  StructField('photo_video_farm_id', StringType(), True),
-  StructField('photo_video_secret', StringType(), True),
-  StructField('photo_video_original_secret', StringType(), True),
-  StructField('photo_video_extension_original', StringType(), True),
-  StructField('photo_video_marker', StringType(), True)
-]
-csv_data_scheme = StructType(fields=csv_field_list)
-
-# Download History
-struct_fields_download_history = [
-  StructField('id', LongType(), False),
-  StructField('status_code', IntegerType(), True),
-  StructField('download_duration', FloatType(), True),
-  StructField('image_size', LongType(), True),
-  StructField('image_path', StringType(), True),
-]
-download_history_schema = StructType(fields=struct_fields_download_history)
-
-# Analysis for column:
-col_analysis = [
-  StructField('column_name', StringType(), False),
-  StructField('total_value_count', IntegerType(), False),
-  StructField('null_value_count', IntegerType(), False)
-]
-col_analysis_schema = StructType(fields=col_analysis)
-
+# MAGIC %run /group07/shared
 
 # COMMAND ----------
 
@@ -60,10 +11,10 @@ def sample_flickr_dataset(full_sample = False, prefix = "", seed = 108115100101)
   DF_SAMPLE_SIZE_FRAC = 0.0001
   BUCKET_COUNT = (len(files_list) if full_sample else 1) 
 
-  df_sampled_buckets = spark.createDataFrame([], csv_data_scheme)
+  df_sampled_buckets = spark.createDataFrame([], get_csv_data_scheme())
   print("file | sample size")
   for i, file in enumerate(files_list[0:BUCKET_COUNT]):
-    df_bucket = spark.read.format("CSV").option("delimiter", "\t").schema(csv_data_scheme).load(file.path[5:]).sample(True, DF_SAMPLE_SIZE_FRAC, seed=seed)
+    df_bucket = spark.read.format("CSV").option("delimiter", "\t").schema(get_csv_data_scheme()).load(file.path[5:]).sample(True, DF_SAMPLE_SIZE_FRAC, seed=seed)
     df_bucket.write.format("parquet").save("/mnt/group07/{0}flickr_bucket_{1}.parquet".format(prefix, i))
     df_sampled_buckets = df_sampled_buckets.union(df_bucket)
     
@@ -99,6 +50,8 @@ def is_flickr_image_download_url(url):
 import requests
 from timeit import default_timer as timer
 from datetime import timedelta
+from PIL import Image
+import io
 
 def download_and_save_image(row):
   try:
@@ -107,29 +60,36 @@ def download_and_save_image(row):
     start_download = timer()
     req = requests.get(row.photo_video_download_url)
     end_download = timer()
-    download_in_seconds = timedelta(seconds=end_download-start_download).total_seconds()
+    download_in_seconds = timedelta(seconds=end_download-start_download).t otal_seconds()
 
     status_code = req.status_code
     # process the result
     if req.status_code == 200:
       image_in_bytes = len(req.content)
-      image_file_path = "/dbfs/mnt/group07/images_test/{0}.jpg".format(row.id)
+      image_file_path = "/dbfs/mnt/group07/images_stats/{0}.jpg".format(row.id)
+      
+      image = Image.open(io.BytesIO(req.content))
+      image_height = image.size[1]
+      image_width = image.size[0]
+       
       f = open(image_file_path,'wb')
       f.write(req.content)
       f.close()
     else:
         image_in_bytes = None
         image_file_path = None
+        image_height = None
+        image_width = None
   except Exception as e:
-    return (row.id, None, None, None, str(e))
-  return (row.id, status_code, download_in_seconds, image_in_bytes, image_file_path)
+    return (row.id, None, None, None, None, None, str(e))
+  return (row.id, status_code, download_in_seconds, image_in_bytes, image_width, image_height, image_file_path)
 
 # COMMAND ----------
 
 # Triggers the flickr download based on the delta of images
 def batch_download_images(df_download_links, df_download_hist):
   batch_map = df_download_links.join(df_download_hist, "id", "leftanti").rdd.map(download_and_save_image)
-  return spark.createDataFrame(batch_map, download_history_schema)
+  return spark.createDataFrame(batch_map, get_download_history_schema())
 
 # Returns a download history dataframe (either from disk or new one)
 def load_download_history():
@@ -137,7 +97,7 @@ def load_download_history():
   if "download_history.parquet/" in [fi.name for fi in dbutils.fs.ls("/mnt/group07")]:
     return spark.read.parquet("/mnt/group07/download_history.parquet")
   else:
-    return spark.createDataFrame([], download_history_schema)
+    return spark.createDataFrame([], get_download_history_schema())
 
 # COMMAND ----------
 
@@ -209,12 +169,8 @@ df_flickr.printSchema()
 
 df_id_download_link = df_flickr.where(df_flickr.photo_video_marker == 0).select(df_flickr.id, df_flickr.photo_video_download_url)
 
-# Store the full list for temp access (TODO: remove later):
-df_full_download_link = df_id_download_link
-# TODO: remove later - this takes only a chuck of the data
-df_id_download_link = df_full_download_link
 # Create required dirs
-dbutils.fs.mkdirs("/mnt/group07/images_test/")
+dbutils.fs.mkdirs("/mnt/group07/images_stats/")
 
 # Load the download history (to avoid downloading unecessary stuff)
 df_download_history = load_download_history()
@@ -223,9 +179,6 @@ df_download_history = load_download_history()
 df_downloads = batch_download_images(df_id_download_link, df_download_history)
 df_download_history = df_download_history.union(df_downloads)
 
-# Show Downloads:
-#df_downloads.show(100, False)
-
 # write the latest download history
 df_download_history.write.mode("overwrite").format("parquet").save("/mnt/group07/download_history.parquet")
 
@@ -233,16 +186,45 @@ df_download_history.write.mode("overwrite").format("parquet").save("/mnt/group07
 
 df_download_history = spark.read.parquet("/mnt/group07/download_history.parquet")
 
-#df_download_history.show()
-df_download_history.count()
+df_download_history.show(100, False)
+
 
 # COMMAND ----------
 
-f1 = dbutils.fs.ls("/mnt/group07/images/")
-f2 = dbutils.fs.ls("/mnt/group07/images_test/")
+df = df_download_history.select("status_code").groupBy("status_code").count()
+df.show()
 
-print(len(f1))
-print(len(f2))
+# COMMAND ----------
+
+df_download_history.filter(df_download_history.status_code == 200).show(10000, False)
+
+# COMMAND ----------
+
+# Get folder count
+f1 = sorted(list(map( lambda x: x.name[: -4], dbutils.fs.ls("/mnt/group07/images/"))))
+f2 = sorted(list(map( lambda x: x.name[: -4], dbutils.fs.ls("/mnt/group07/images_stats/"))))
+# f2 = dbutils.fs.ls("/mnt/group07/images_stats/")
+
+print(f1[0])
+print(f2[0])
+
+f_diff = set(f1) - set(f2)
+
+df_diff = df_flickr.where(df_flickr.id.isin(f_diff))
+
+df_diff.show(100, False)
+
+#print(len(f2))
+#print(len(f1))
+print(len(f_diff))
+#for fd in f_diff:
+#  print(fd)
+
+# COMMAND ----------
+
+files = dbutils.fs.ls("/mnt/data/flickr")
+file = files[0]
+print(file )
 
 # COMMAND ----------
 
